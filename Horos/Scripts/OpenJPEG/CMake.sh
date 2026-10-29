@@ -51,6 +51,7 @@ args+=(-DBUILD_DOC=OFF)
 args+=(-DBUILD_SHARED_LIBS=OFF)
 args+=(-DBUILD_STATIC_LIBS=ON)
 args+=(-DBUILD_TESTING=OFF)
+args+=(-DBUILD_CODEC=OFF) # Horos only needs libopenjp2, not the opj_* executables
 
 args+=(-DCMAKE_IGNORE_PATH="/opt/local/include;/opt/local/lib")
 
