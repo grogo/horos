@@ -5,7 +5,8 @@ export PATH="$PATH:/opt/local/bin:/opt/local/sbin"
 path="$( cd "$(dirname "${BASH_SOURCE[0]}")" && pwd )/$(basename "${BASH_SOURCE[0]}")"
 cd "$TARGET_NAME"; pwd
 
-env=$(env|sort|grep -v 'LLBUILD_BUILD_ID=\|LLBUILD_LANE_ID=\|LLBUILD_TASK_ID=\|Apple_PubSub_Socket_Render=\|DISPLAY=\|SHLVL=\|SSH_AUTH_SOCK=\|SECURITYSESSIONID=')
+# Only build-relevant settings, so builds from different terminals/shells don't force a full rebuild
+env=$( (env | grep -E '^(ARCHS|CONFIGURATION|MACOSX_DEPLOYMENT_TARGET|CLANG_CXX_LANGUAGE_STANDARD|CLANG_CXX_LIBRARY|OTHER_CFLAGS|OTHER_CPLUSPLUSFLAGS|OTHER_LDFLAGS|SRCROOT|PROJECT_DIR|TARGET_NAME|TARGET_TEMP_DIR|TARGET_BUILD_DIR|CONFIGURATION_TEMP_DIR|SDKROOT|DEVELOPER_DIR|XCODE_PRODUCT_BUILD_VERSION|CC|CXX|CFLAGS|CXXFLAGS|CPPFLAGS|LDFLAGS|CMAKE_[A-Z_]*|PKG_CONFIG_[A-Z_]*)='; for t in cmake pkg-config; do echo "$t=$(command -v $t) $($t --version 2>/dev/null | head -1)"; done) | sort)
 hash="$(git describe --always --tags --dirty) $(md5 -q "$path")-$(md5 -qs "$env")"
 set -e; set -o xtrace
 
