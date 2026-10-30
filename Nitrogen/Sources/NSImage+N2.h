@@ -54,6 +54,9 @@
 -(NSImage*)imageByScalingProportionallyToSizeUsingNSImage:(NSSize)targetSize;
 -(NSImage*)imageByScalingProportionallyUsingNSImage:(float)ratio;
 
+// Current macOS versions no longer scale toolbar images to the toolbar size, and many of our icons are large PDFs
+-(NSImage*)imageScaledToFitToolbar;
+
 @end
 
 @interface N2Image : NSImage {

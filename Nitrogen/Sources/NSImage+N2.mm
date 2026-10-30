@@ -483,4 +483,14 @@ end_size_y:
 	return [returnImage autorelease];
 }
 
+-(NSImage*)imageScaledToFitToolbar {
+    NSSize size = [self sizeByScalingDownProportionallyToSize:NSMakeSize(32, 32)];
+    if (NSEqualSizes(size, self.size))
+        return self;
+
+    NSImage* image = [[self copy] autorelease]; // imageNamed: returns a shared instance
+    image.size = size; // keeps vector (PDF) representations sharp
+    return image;
+}
+
 @end

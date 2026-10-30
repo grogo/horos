@@ -631,10 +631,27 @@ void exceptionHandler(NSException *exception)
 
 
 #import "JRSwizzle.h"
+#import "NSImage+N2.h"
 
 @implementation NSWindow (FFS)
 - (BOOL) HOROS_showsFullScreenButton {
     return NO;
+}
+@end
+
+@implementation NSToolbarItem (FitImage)
+// Current macOS versions no longer scale toolbar images to the toolbar size, so do it for every image a toolbar item gets, including later changes (e.g. Sync, Play/Stop) and plugin items
++ (void) load {
+    // in +load, because the browser toolbar is created while MainMenu.xib loads, before applicationWillFinishLaunching:
+    NSError *error = nil;
+    [NSToolbarItem jr_swizzleMethod:@selector(setImage:) withMethod:@selector(HOROS_setImage:) error:&error];
+    if (error) {
+        NSLog(@"Unable to swizzle NSToolbarItem setImage: %@", error);
+    }
+}
+
+- (void) HOROS_setImage: (NSImage*) image {
+    [self HOROS_setImage: [image imageScaledToFitToolbar]];
 }
 @end
 

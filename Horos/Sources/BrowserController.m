@@ -19446,19 +19446,6 @@ restart:
         }
     }
     
-    // Current macOS versions no longer scale toolbar images to the toolbar size, and our PDF icons are ~500 pt
-    if( toolbarItem.view == nil && toolbarItem.image)
-    {
-        NSImage *image = [[toolbarItem.image copy] autorelease]; // imageNamed: returns a shared instance
-        NSSize size = image.size;
-        CGFloat scale = 32. / MAX( size.width, size.height);
-        if( scale < 1)
-        {
-            image.size = NSMakeSize( size.width * scale, size.height * scale);
-            toolbarItem.image = image;
-        }
-    }
-    
     return toolbarItem;
 }
 
