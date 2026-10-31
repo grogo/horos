@@ -2921,8 +2921,10 @@ static BOOL protectionAgainstReentry = NO;
               && (pathname = [enumer nextObject]))
         {
             if (thread.isCancelled)
-                return 0;
-            
+                break; // don't return: files already moved out of INCOMING must still be indexed (or moved back) below
+
+            @try // one bad file must not abort the pass, or the files already moved out of INCOMING are never indexed
+            {
             NSString *srcPath = [self.incomingDirPath stringByAppendingPathComponent:pathname];
             NSString *originalPath = srcPath;
             NSString *lastPathComponent = [srcPath lastPathComponent];
@@ -3071,9 +3073,14 @@ static BOOL protectionAgainstReentry = NO;
                                                 else
                                                 {
                                                     
+                                                    // Data may be truncated (e.g. interrupted download): the closing boundary can be missing
+                                                    if (lastBoundaryLocation + boundaryLength >= dataLength)
+                                                        break;
                                                     boundaryRange = [data rangeOfData:boundaryData options:0 range:NSMakeRange(lastBoundaryLocation+boundaryLength, dataLength - lastBoundaryLocation - boundaryLength)];
-                                                    if (boundaryRange.location != NSNotFound) lastBoundaryLocation = dataLength;
-                                                    if ((DICMRange.location > applicationDicomRange.location) && (boundaryRange.location > DICMRange.location))
+                                                    if (boundaryRange.location == NSNotFound)
+                                                        break;
+                                                    if ((DICMRange.location > applicationDicomRange.location) && (boundaryRange.location > DICMRange.location) &&
+                                                        DICMRange.location >= 128 && boundaryRange.location >= DICMRange.location - 128 + 2)
                                                     {
                                                         //write dicom file
                                                         datasetOffset=DICMRange.location - 128;
@@ -3170,7 +3177,12 @@ static BOOL protectionAgainstReentry = NO;
                     }
                 }
             }
-            
+            }
+            @catch (NSException* e)
+            {
+                N2LogExceptionWithStackTrace(e);
+            }
+
             if( [NSDate timeIntervalSinceReferenceDate] - start > 0.5)
             {
                 thread.status =  N2LocalizedSingularPluralCount( filesArray.count, NSLocalizedString(@"file", nil), NSLocalizedString(@"files", nil));
@@ -3268,7 +3280,7 @@ static BOOL protectionAgainstReentry = NO;
         {
             //            [self performSelectorInBackground:@selector(_threadCompressToIncoming:) withObject:compressedPathArray];
             
-            @synchronized (_decompressQueue) {
+            @synchronized (_compressQueue) {
                 [_compressQueue addObjectsFromArray:compressedPathArray];
             }
             
