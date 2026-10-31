@@ -310,6 +310,19 @@ static NSString *templateDicomFile = nil;
     NSRunCriticalAlertPanel( NSLocalizedString( @"Error", nil), @"%@", NSLocalizedString( @"OK", nil), nil, nil, s);
 }
 
+// Value the anonymization writes for this tag: its replacement value, an empty string if the tag is emptied, or original if the tag isn't anonymized
++(NSString*)replacementValueForGroup:(int)group element:(int)element inTags:(NSArray*)tags original:(NSString*)original
+{
+	for (NSArray* item in tags)
+	{
+		DCMAttributeTag* tag = [item objectAtIndex:0];
+		if (tag.group == group && tag.element == element)
+			return item.count > 1 ? [[item objectAtIndex:1] description] : @"";
+	}
+
+	return original ? original : @"";
+}
+
 +(NSDictionary*)anonymizeFiles:(NSArray*)files dicomImages: (NSArray*) dicomImages toPath:(NSString*)dirPath withTags:(NSArray*)intags
 {
 	if( [files count] != [dicomImages count])
@@ -612,18 +625,22 @@ static NSString *templateDicomFile = nil;
                     NSString* ext = [tempFilePath pathExtension];
                     NSString* fileDirPath = nil;
                     
-                    if( [image.series.study.patientID length] > 0)
+                    // Folder names must not reveal the original values: use the anonymized replacements
+                    NSString* patientID = [Anonymization replacementValueForGroup:0x0010 element:0x0020 inTags:tags original:nil];
+                    if( [patientID length] > 0)
                     {
-                        fileDirPath = [dirPath stringByAppendingPathComponent: [NSString stringWithFormat: NSLocalizedString( @"Anonymized - %@", nil), [Anonymization cleanStringForFile:image.series.study.patientID]]];
+                        fileDirPath = [dirPath stringByAppendingPathComponent: [NSString stringWithFormat: NSLocalizedString( @"Anonymized - %@", nil), [Anonymization cleanStringForFile:patientID]]];
                     }
                     else
                     {
                         fileDirPath = [dirPath stringByAppendingPathComponent: NSLocalizedString( @"Anonymized", nil)];
                     }
-                    
-                    fileDirPath = [fileDirPath stringByAppendingPathComponent: [Anonymization cleanStringForFile: image.series.study.studyName]];
-                    
-                    fileDirPath = [fileDirPath stringByAppendingPathComponent: [Anonymization cleanStringForFile: [NSString stringWithFormat:@"%@ - %@", image.series.name, image.series.id]]];
+
+                    NSString* studyName = [Anonymization replacementValueForGroup:0x0008 element:0x1030 inTags:tags original:image.series.study.studyName];
+                    fileDirPath = [fileDirPath stringByAppendingPathComponent: [Anonymization cleanStringForFile: studyName]];
+
+                    NSString* seriesName = [Anonymization replacementValueForGroup:0x0008 element:0x103E inTags:tags original:image.series.name];
+                    fileDirPath = [fileDirPath stringByAppendingPathComponent: [Anonymization cleanStringForFile: [NSString stringWithFormat:@"%@ - %@", seriesName, image.series.id]]];
                     
                     @try
                     {
@@ -684,16 +701,15 @@ static NSString *templateDicomFile = nil;
                 
                 [splash incrementBy: 1];
             }
-            
-            
-            
-            if( tempDirPath)
-            {
-                [[NSFileManager defaultManager] removeItemAtPath:tempDirPath error:NULL];
-            }
         }
     }
-    
+
+    // Always remove the temp dir: it holds non-anonymized copies of the originals
+    if( tempDirPath)
+    {
+        [[NSFileManager defaultManager] removeItemAtPath:tempDirPath error:NULL];
+    }
+
     //////////////////////
     //////////////////////
     //////////////////////
