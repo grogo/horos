@@ -1309,12 +1309,27 @@ void info_callback(const char *msg, void *a) {
      RLE header is 64 bytes long as a sequence of 16  unsigned longs.
      First elements is number of segments.  The next are length of the segments.
      */
+    // All offsets and run lengths come from the file: every read is bounded by rleLength, every write by the output length
+    NSUInteger rleLength = [rleData length];
+    if (rleLength < 64) {
+        NSLog(@"Error deompressing RLE: fragment shorter than the RLE header");
+        return nil;
+    }
     unsigned int offsetTable[16];
     [rleData getBytes:offsetTable  range:NSMakeRange(0, 64)];
     int i;
     for (i = 0; i < 16; i++)
         offsetTable[i] = NSSwapLittleIntToHost(offsetTable[i]);
     int segmentCount = offsetTable[0];
+    if (segmentCount < 1 || segmentCount > 3) {
+        NSLog(@"Error deompressing RLE: unsupported segment count %d", segmentCount);
+        return nil;
+    }
+    for (i = 0; i < segmentCount; i++)
+        if (offsetTable[i+1] < 64 || offsetTable[i+1] >= rleLength) {
+            NSLog(@"Error deompressing RLE: invalid segment offset");
+            return nil;
+        }
     i = 0;
     /*
      if n >= 0  and < 127
@@ -1326,8 +1341,8 @@ void info_callback(const char *msg, void *a) {
     NSMutableData *decompressedData = [NSMutableData data];
     
     @try {
-        int j,k, position;
-        int decompressedLength = _rows * _columns;
+        NSUInteger j,k, position;
+        NSUInteger decompressedLength = (NSUInteger)_rows * _columns;
         if (_pixelDepth > 8)
             decompressedLength *= 2;
         signed char *buffer = (signed char *)[rleData bytes];
@@ -1342,17 +1357,19 @@ void info_callback(const char *msg, void *a) {
                 unsigned char *newData = (unsigned char*) [data mutableBytes];
                 position = offsetTable[1];
                 //			NSLog(@"position: %d", position);
-                while ( j < decompressedLength) {
+                while ( j < decompressedLength && position < rleLength) {
                     if ((buffer[position] >= 0)) {
                         int runLength = buffer[position] + 1;
                         position++;
-                        for (k = 0; k < runLength; k++)
+                        for (k = 0; k < runLength && j < decompressedLength && position < rleLength; k++)
                             newData[j++] = buffer[position++];
                     }
                     else if ((buffer[position] < 0) && (buffer[position] > -128)) {
                         int runLength = 1 - buffer[position];
                         position++;
-                        for ( k = 0; k < runLength; k++)
+                        if (position >= rleLength)
+                            break;
+                        for ( k = 0; k < runLength && j < decompressedLength; k++)
                             newData[j++] = buffer[position];
                         position++;
                     }
@@ -1363,30 +1380,39 @@ void info_callback(const char *msg, void *a) {
             }
                 break;
             case 2:
-                data = [NSMutableData dataWithLength:decompressedLength * 2];
+            {
+                NSUInteger dataLength = decompressedLength * 2;
+                data = [NSMutableData dataWithLength:dataLength];
                 for (i = 0; i< segmentCount; i++) {
                     j = i;
                     unsigned char *newData = (unsigned char*) [data mutableBytes];
                     position = offsetTable[i+1];
-                    while ( j < decompressedLength) {
+                    while ( j < decompressedLength && position < rleLength) {
                         if ((buffer[position] >= 0)) {
                             int runLength = buffer[position] + 1;
                             position++;
-                            for (k = 0; k < runLength; k++)
+                            for (k = 0; k < runLength && j + 2 < dataLength && position < rleLength; k++)
                                 newData[j+=2] = buffer[position++];
+                            if (j + 2 >= dataLength)
+                                break;
                         }
                         else if ((buffer[position] < 0) && (buffer[position] > -128)) {
                             int runLength = 1 - buffer[position];
                             position++;
-                            for ( k = 0; k < runLength; k++)
+                            if (position >= rleLength)
+                                break;
+                            for ( k = 0; k < runLength && j + 2 < dataLength; k++)
                                 newData[j+=2] = buffer[position];
                             position++;
+                            if (j + 2 >= dataLength)
+                                break;
                         }
                         else if (buffer[position] == -128)
                             position++;
                     }
                 }
                 [decompressedData appendData:data];
+            }
                 break;
             case 3:
                 for (i = 0; i< segmentCount; i++) {
@@ -1394,17 +1420,19 @@ void info_callback(const char *msg, void *a) {
                     data = [NSMutableData dataWithLength:decompressedLength];
                     unsigned char *newData = (unsigned char*) [data mutableBytes];
                     position = offsetTable[i+1];
-                    while ( j < decompressedLength) {
+                    while ( j < decompressedLength && position < rleLength) {
                         if ((buffer[position] >= 0)) {
                             int runLength = buffer[position] + 1;
                             position++;
-                            for (k = 0; k < runLength; k++)
+                            for (k = 0; k < runLength && j < decompressedLength && position < rleLength; k++)
                                 newData[j++] = buffer[position++];
                         }
                         else if ((buffer[position] < 0) && (buffer[position] > -128)) {
                             int runLength = 1 - buffer[position];
                             position++;
-                            for ( k = 0; k < runLength; k++)
+                            if (position >= rleLength)
+                                break;
+                            for ( k = 0; k < runLength && j < decompressedLength; k++)
                                 newData[j++] = buffer[position];
                             position++;
                         }
@@ -2395,6 +2423,53 @@ void info_callback(const char *msg, void *a) {
         NSLog( @"****** NOT ENOUGH MEMORY ! UPGRADE TO OSIRIX 64-BIT");
 }
 
+// Decodes a DICOM segmented palette color lookup table (PS3.3 C.7.9.2) into a 65536-entry table.
+// Never writes past the table or reads past the input, since both sizes come from the file.
+static void DCMDecodeSegmentedLUT( const unsigned short *ptrs, unsigned long nbVal, unsigned short *lut)
+{
+    long index = 0;
+    
+    for( unsigned long jj = 0; jj + 1 < nbVal; jj++)
+    {
+        int type = NSSwapLittleShortToHost( ptrs[ jj]);
+        long length = NSSwapLittleShortToHost( ptrs[ ++jj]);
+        
+        switch( type)
+        {
+            case 0:	// Discrete: 'length' values follow
+                for( long i = 0; i < length && jj + 1 < nbVal; i++)
+                {
+                    unsigned short value = NSSwapLittleShortToHost( ptrs[ ++jj]);
+                    if( index < 65536)
+                        lut[ index++] = value;
+                }
+                break;
+                
+            case 1:	// Linear: ramp from the previous entry to the value that follows
+            {
+                if( jj + 1 >= nbVal)
+                    return;
+                
+                unsigned short value = NSSwapLittleShortToHost( ptrs[ ++jj]);
+                unsigned short startValue = index > 0 ? lut[ index-1] : value;
+                
+                for( long i = 0; i < length && index < 65536; i++, index++)
+                    lut[ index] = startValue + ((value - startValue) * (i+1)) / length;
+                break;
+            }
+                
+            case 2: // Indirect
+                NSLog(@"indirect not supported");
+                jj += 2;
+                break;
+                
+            default:
+                NSLog(@"Unknown segmented palette segment type: %d", type);
+                return;
+        }
+    }
+}
+
 - (NSData *)convertPaletteToRGB:(NSData *)data
 {
     BOOL			fSetClut = NO, fSetClut16 = NO;
@@ -2447,11 +2522,9 @@ void info_callback(const char *msg, void *a) {
                 //NSLog(@"Segmented LUT");
                 if (clutDepthR == 16  && clutDepthG == 16  && clutDepthB == 16)
                 {
-                    long			length, xx, xxindex, jj;
-                    
-                    shortRed = (unsigned short*) malloc( 65535L * sizeof( unsigned short));
-                    shortGreen = (unsigned short*) malloc( 65535L * sizeof( unsigned short));
-                    shortBlue = (unsigned short*) malloc( 65535L * sizeof( unsigned short));
+                    shortRed = (unsigned short*) calloc( 65536L, sizeof( unsigned short));
+                    shortGreen = (unsigned short*) calloc( 65536L, sizeof( unsigned short));
+                    shortBlue = (unsigned short*) calloc( 65536L, sizeof( unsigned short));
                     
                     // extract the RED palette clut data
                     val = (unsigned short *)[segmentedRedData bytes];
@@ -2462,51 +2535,7 @@ void info_callback(const char *msg, void *a) {
                         
                         //NSLog(@"red");
                         
-                        xxindex = 0;
-                        for( jj = 0; jj < nbVal;jj++)
-                        {
-                            int type = NSSwapLittleShortToHost(ptrs[jj]);
-                            //NSLog(@"Type: %d", type);
-                            switch(type)
-                            {
-                                case 0:	// Discrete
-                                    jj++;
-                                    length = NSSwapLittleShortToHost(ptrs[jj]);
-                                    jj++;
-                                    for( xx = xxindex; xxindex < xx + length; xxindex++)
-                                    {
-                                        unsigned short pixel = NSSwapLittleShortToHost(ptrs[ jj++]);
-                                        shortRed[ xxindex] = pixel;
-                                        //if( xxindex < 256) NSLog(@"Type: %d  pixel:%d, swapped: %d", shortRed[ xxindex], NSSwapLittleShortToHost(shortRed[ xxindex]));
-                                    }
-                                    jj--;
-                                    break;
-                                    
-                                case 1:	// Linear
-                                    jj++;
-                                    length = NSSwapLittleShortToHost(ptrs[jj]);
-                                    for( xx = xxindex; xxindex < xx + length; xxindex++)
-                                    {
-                                        unsigned short pixel = NSSwapLittleShortToHost(ptrs[ jj + 1]);
-                                        shortRed[ xxindex] = shortRed[ xx-1] + ((pixel - shortRed[ xx-1]) * (1+xxindex - xx)) / (length);
-                                        //if( xxindex < 256) NSLog(@"%d", shortRed[ xxindex]);
-                                    }
-                                    jj ++;
-                                    break;
-                                    
-                                case 2: // Indirect
-                                    NSLog(@"indirect not supported");
-                                    jj++;
-                                    length = NSSwapLittleShortToHost(ptrs[jj]);
-                                    
-                                    jj += 2;
-                                    break;
-                                    
-                                default:
-                                    NSLog(@"Error, Error, Horos will soon crash...");
-                                    break;
-                            }
-                        }
+                        DCMDecodeSegmentedLUT( ptrs, nbVal, shortRed);
                         found16 = YES; 	// this is used to let us know we have to look for the other element */
                         //NSLog(@"%d", xxindex);
                     }//endif
@@ -2521,51 +2550,7 @@ void info_callback(const char *msg, void *a) {
                         
                         //NSLog(@"green");
                         
-                        xxindex = 0;
-                        for( jj = 0; jj < nbVal; jj++)
-                        {
-                            int type = NSSwapLittleShortToHost(ptrs[jj]);
-                            //NSLog(@"Green Type: %d", type);
-                            switch(type)
-                            {
-                                case 0:	// Discrete
-                                    jj++;
-                                    length = NSSwapLittleShortToHost(ptrs[jj]);
-                                    jj++;
-                                    for( xx = xxindex; xxindex < xx + length; xxindex++)
-                                    {
-                                        unsigned short pixel = NSSwapLittleShortToHost(ptrs[ jj++]);
-                                        shortGreen[ xxindex] = pixel;
-                                        //if( xxindex < 256) NSLog(@"%d", shortGreen[ xxindex]);
-                                    }
-                                    jj--;
-                                    break;
-                                    
-                                case 1:	// Linear
-                                    jj++;
-                                    length = NSSwapLittleShortToHost(ptrs[jj]);
-                                    for( xx = xxindex; xxindex < xx + length; xxindex++)
-                                    {
-                                        unsigned short pixel = NSSwapLittleShortToHost(ptrs[ jj + 1]);
-                                        shortGreen[ xxindex] = shortGreen[ xx-1] + ((pixel - shortGreen[ xx-1]) * (1+xxindex - xx)) / (length);
-                                        //	if( xxindex < 256) NSLog(@"%d", shortGreen[ xxindex]);
-                                    }
-                                    jj ++;
-                                    break;
-                                    
-                                case 2: // Indirect
-                                    NSLog(@"indirect not supported");
-                                    jj++;
-                                    length = NSSwapLittleShortToHost(ptrs[jj]);
-                                    
-                                    jj += 2;
-                                    break;
-                                    
-                                default:
-                                    NSLog(@"Error, Error, Horos will soon crash...");
-                                    break;
-                            }
-                        }
+                        DCMDecodeSegmentedLUT( ptrs, nbVal, shortGreen);
                         found16 = YES; 	// this is used to let us know we have to look for the other element
                         //NSLog(@"%d", xxindex);
                     }//endif
@@ -2580,51 +2565,7 @@ void info_callback(const char *msg, void *a) {
                         
                         //NSLog(@"blue");
                         
-                        xxindex = 0;
-                        for( jj = 0; jj < nbVal; jj++)
-                        {
-                            int type = NSSwapLittleShortToHost(ptrs[jj]);
-                            //NSLog(@"Blue Type: %d", type);
-                            switch(type)
-                            {
-                                case 0:	// Discrete
-                                    jj++;
-                                    length = NSSwapLittleShortToHost(ptrs[jj]);
-                                    jj++;
-                                    for( xx = xxindex; xxindex < xx + length; xxindex++)
-                                    {
-                                        unsigned short pixel = NSSwapLittleShortToHost(ptrs[ jj++]);
-                                        shortBlue[ xxindex] = pixel;
-                                        //			if( xxindex < 256) NSLog(@"%d", shortBlue[ xxindex]);
-                                    }
-                                    jj--;
-                                    break;
-                                    
-                                case 1:	// Linear
-                                    jj++;
-                                    length = NSSwapLittleShortToHost(ptrs[jj]);
-                                    for( xx = xxindex; xxindex < xx + length; xxindex++)
-                                    {
-                                        unsigned short pixel = NSSwapLittleShortToHost(ptrs[ jj + 1]);
-                                        shortBlue[ xxindex] = shortBlue[ xx-1] + ((pixel - shortBlue[ xx-1]) * (xxindex - xx + 1)) / (length);
-                                        //if( xxindex < 256) NSLog(@"%d", shortBlue[ xxindex]);
-                                    }
-                                    jj ++;
-                                    break;
-                                    
-                                case 2: // Indirect
-                                    NSLog(@"indirect not supported");
-                                    jj++;
-                                    length = NSSwapLittleShortToHost(ptrs[jj]);
-                                    
-                                    jj += 2;
-                                    break;
-                                    
-                                default:
-                                    NSLog(@"Error, Error, Horos will soon crash...");
-                                    break;
-                            }
-                        }
+                        DCMDecodeSegmentedLUT( ptrs, nbVal, shortBlue);
                         found16 = YES; 	// this is used to let us know we have to look for the other element
                         //NSLog(@"%d", xxindex);
                     }//endif
@@ -2731,7 +2672,7 @@ void info_callback(const char *msg, void *a) {
                         found = YES;
                     }
                     else{
-                        unsigned char  *ptrs =  (unsigned char*) [[greenCLUT value] bytes];
+                        unsigned char  *ptrs =  (unsigned char*) [[blueCLUT value] bytes];
                         for (j = 0; j < clutEntryB; j++, ptrs++) clutBlue [j] = (int) (*ptrs);
                         found = YES; 	// this is used to let us know we have to look for the other element
                     }
@@ -3256,12 +3197,12 @@ void info_callback(const char *msg, void *a) {
             if ([_values count] > 1  && [(NSData *)[_values objectAtIndex:0] length] > 0) {
                 int i;
                 NSData *offsetData = [_values objectAtIndex:0];
-                unsigned long *offsets = (unsigned long *)[offsetData bytes];
+                uint32_t *offsets = (uint32_t *)[offsetData bytes]; // Basic Offset Table entries are 32-bit
                 int numberOfOffsets = (int)[offsetData length]/4;
                 for ( i = 0; i < numberOfOffsets; i++)
                 {
                     if ( transferSyntax.isLittleEndian ) 
-                        offset = NSSwapLittleLongToHost(offsets[i]);
+                        offset = NSSwapLittleIntToHost(offsets[i]);
                     else
                         offset = offsets[i];
                     [offsetTable addObject:[NSNumber numberWithLong:offset]];
@@ -3381,11 +3322,11 @@ void info_callback(const char *msg, void *a) {
             if ([_values count] > 1  && [(NSData *)[_values objectAtIndex:0] length] > 0) {
                 int i;
                 NSData *offsetData = [_values objectAtIndex:0];
-                unsigned long *offsets = (unsigned long *)[offsetData bytes];
+                uint32_t *offsets = (uint32_t *)[offsetData bytes]; // Basic Offset Table entries are 32-bit
                 int numberOfOffsets = (int)[offsetData length]/4;
                 for ( i = 0; i < numberOfOffsets; i++) {
                     if ( transferSyntax.isLittleEndian ) 
-                        offset = NSSwapLittleLongToHost(offsets[i]);
+                        offset = NSSwapLittleIntToHost(offsets[i]);
                     else
                         offset = offsets[i];
                     [offsetTable addObject:[NSNumber numberWithLong:offset]];

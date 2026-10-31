@@ -1044,9 +1044,9 @@ PixelRepresentation
 		while (undefinedLength || *byteOffset < endByteOffset)
         {
 			NSAutoreleasePool *subPool = [[NSAutoreleasePool alloc] init];
+            int itemStartOffset=*byteOffset;
             
             @try {
-                int itemStartOffset=*byteOffset;
                 int group = [self getGroup:dicomData];
                 int element = [self getElement:dicomData];
                 DCMAttributeTag *tag = [[[DCMAttributeTag alloc]  initWithGroup:group element:element] autorelease];
@@ -1078,6 +1078,9 @@ PixelRepresentation
             @catch( NSException *e) {
                 NSLog( @"%@", e);
 //                break; // Horos bug #210 provided to OP, but OP stopped responding to email
+                // Keep skipping bad tags (bug #210), but stop when no progress is possible (truncated file, failed nested item), otherwise this loops forever
+                if (![dicomData dataRemaining] || *byteOffset <= itemStartOffset)
+                    break; // @finally releases subPool
             }
             @finally {
                 [subPool release];
