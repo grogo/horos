@@ -55,6 +55,9 @@ extern NSString* const SessionUserIDKey;
 
 -(id)initWithId:(NSString*)isid;
 
+// Unpredictable identifier (session ids, tokens, challenges): 16 cryptographically random bytes as hex
++(NSString*)randomIdentifier;
+
 -(void)setObject:(id)o forKey:(NSString*)k;
 -(id)objectForKey:(NSString*)k;
 

@@ -306,6 +306,10 @@ NSString* const SessionDicomCStorePortKey = @"DicomCStorePort"; // NSNumber (int
 
 -(BOOL)isPasswordProtected:(NSString*)path
 {
+	// HTTPConnection passes the whole URI: only check the path (as routed in httpResponseForMethod:URI:), or e.g. "/studyList?x=.js" would skip authentication
+	path = [[path componentsSeparatedByString:@"?"] objectAtIndex:0];
+	path = [[path componentsSeparatedByString:@"#"] objectAtIndex:0];
+
 	if ([path hasPrefix: @"/wado"]
 	|| [path hasPrefix: @"/images/"]
 	|| [path isEqualToString: @"/"]
@@ -463,17 +467,11 @@ NSString* const SessionDicomCStorePortKey = @"DicomCStorePort"; // NSNumber (int
 	
 	// find the name of the requested file
     NSString *requestedPath = [urlComponenents objectAtIndex:0];
-	// SECURITY: we cannot allow the client to read any file on the hard disk (outside the shared dir), so no ".."
-    //FIXED 20170312: path traversal bug, added extra filtering patterns: https://www.exploit-db.com/exploits/40930/ https://github.com/horosproject/horos/issues/163
-    // TODO: I am convinced the next lines aren't doing what they were supposed to be doing, basically only the last one has any effect since all these lines don't consider the previous changes
-    requestedPath = [[urlComponenents objectAtIndex:0] stringByReplacingOccurrencesOfString:@"../" withString:@""];
-    requestedPath = [[urlComponenents objectAtIndex:0] stringByReplacingOccurrencesOfString:@"/../" withString:@""];
-    requestedPath = [[urlComponenents objectAtIndex:0] stringByReplacingOccurrencesOfString:@"..//" withString:@""];
-    requestedPath = [[urlComponenents objectAtIndex:0] stringByReplacingOccurrencesOfString:@"/../" withString:@""];
-    requestedPath = [[urlComponenents objectAtIndex:0] stringByReplacingOccurrencesOfString:@"/..//" withString:@""];
-    requestedPath = [[urlComponenents objectAtIndex:0] stringByReplacingOccurrencesOfString:@"//.." withString:@""];
-    requestedPath = [[urlComponenents objectAtIndex:0] stringByReplacingOccurrencesOfString:@"//../" withString:@""];
-    
+	// SECURITY: we cannot allow the client to read any file on the hard disk (outside the shared dir), so no ".." component, also not percent-encoded
+    // (https://www.exploit-db.com/exploits/40930/ https://github.com/horosproject/horos/issues/163)
+    NSString *decodedPath = [requestedPath stringByRemovingPercentEncoding];
+    BOOL pathTraversal = [[requestedPath pathComponents] containsObject:@".."] || !decodedPath || [[decodedPath pathComponents] containsObject:@".."];
+
     self.requestedPath = requestedPath;
     
 //	NSString* userAgent = [(id)CFHTTPMessageCopyHeaderFieldValue(request, (CFStringRef)@"User-Agent") autorelease];
@@ -492,7 +490,11 @@ NSString* const SessionDicomCStorePortKey = @"DicomCStorePort"; // NSNumber (int
 	
 //    [response.httpHeaders setObject: @"no-cache" forKey: @"Cache-Control"];
     
-	if ([self.requestedPath hasPrefix:@"/weasis/"])
+	if (pathTraversal)
+	{
+		response.statusCode = 404;
+	}
+	else if ([self.requestedPath hasPrefix:@"/weasis/"])
 	{
 		#ifndef OSIRIX_LIGHT
         BOOL assigned = false;

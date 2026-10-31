@@ -51,6 +51,12 @@ NSString* const SessionLastActivityDateKey = @"LastActivityDate"; // NSDate
 
 @synthesize sid, dict;
 
++(NSString*)randomIdentifier {
+	unsigned char bytes[16];
+	arc4random_buf(bytes, sizeof(bytes)); // cryptographically secure, unlike random() or timestamps
+	return [[NSData dataWithBytes:bytes length:sizeof(bytes)] hex];
+}
+
 -(id)initWithId:(NSString*)isid {
 	self = [super init];
 	sid = [isid retain];
@@ -98,10 +104,9 @@ NSString* const SessionLastActivityDateKey = @"LastActivityDate"; // NSDate
 	[dictLock lock];
 	
 	NSString* token;
-	double tokend;
-	do { // is this a dumb way to generate tokens?
-		tokend = [NSDate timeIntervalSinceReferenceDate];
-	} while ([[tokensDictionary allKeys] containsObject: token = [[[NSData dataWithBytes:&tokend length:sizeof(double)] md5Digest] hex]]);
+	do {
+		token = [WebPortalSession randomIdentifier];
+	} while ([tokensDictionary objectForKey:token]);
 	
 	[tokensDictionary setObject:[NSDate date] forKey:token];
 	
@@ -146,9 +151,10 @@ NSString* const SessionLastActivityDateKey = @"LastActivityDate"; // NSDate
 }
 
 -(NSString*)newChallenge {
-	double challenged = [NSDate timeIntervalSinceReferenceDate];
-	NSString* challenge = [[[NSData dataWithBytes:&challenged length:sizeof(double)] md5Digest] hex];
+	NSString* challenge = [WebPortalSession randomIdentifier];
+	[dictLock lock];
 	[dict setObject:challenge forKey:SessionChallengeKey];
+	[dictLock unlock];
 	return challenge;
 }
 
@@ -157,7 +163,9 @@ NSString* const SessionLastActivityDateKey = @"LastActivityDate"; // NSDate
 }
 
 -(void)deleteChallenge {
-	return [dict removeObjectForKey:SessionChallengeKey];
+	[dictLock lock];
+	[dict removeObjectForKey:SessionChallengeKey];
+	[dictLock unlock];
 }
 
 

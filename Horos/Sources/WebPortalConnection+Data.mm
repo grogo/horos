@@ -411,7 +411,6 @@ ss
         else if ([parameters objectForKey:@"searchID"])
         {
             *title = NSLocalizedString(@"Search Results", @"Web portal, study list, title");
-            NSMutableString *search = [NSMutableString string];
             NSString *searchString = [NSString stringWithString:[parameters objectForKey:@"searchID"]];
             
             NSArray *components = [searchString componentsSeparatedByString:@" "];
@@ -424,8 +423,8 @@ ss
             
             searchString = [newComponents componentsJoinedByString:@" "];
             
-            [search appendFormat:@"patientID BEGINSWITH[cd] '%@'", searchString]; // [c] is for 'case INsensitive' and [d] is to ignore accents (diacritic)
-            browsePredicate = [NSPredicate predicateWithFormat:search];
+            // [c] is for 'case INsensitive' and [d] is to ignore accents (diacritic); searchString is passed as an argument, never pasted into the format (injection, crash on '%@')
+            browsePredicate = [NSPredicate predicateWithFormat:@"patientID BEGINSWITH[cd] %@", searchString];
             
             if( searchString.length >= 2)
                 [PODFilter setObject: [searchString stringByAppendingString:@"*"] forKey: @"PatientID"];
@@ -433,7 +432,6 @@ ss
         else if ([parameters objectForKey:@"searchAccessionNumber"])
         {
             *title = NSLocalizedString(@"Search Results", @"Web portal, study list, title");
-            NSMutableString *search = [NSMutableString string];
             NSString *searchString = [NSString stringWithString:[parameters objectForKey:@"searchAccessionNumber"]];
             
             NSArray *components = [searchString componentsSeparatedByString:@" "];
@@ -446,8 +444,8 @@ ss
             
             searchString = [newComponents componentsJoinedByString:@" "];
             
-            [search appendFormat:@"accessionNumber BEGINSWITH[cd] '%@'", searchString]; // [c] is for 'case INsensitive' and [d] is to ignore accents (diacritic)
-            browsePredicate = [NSPredicate predicateWithFormat:search];
+            // [c] is for 'case INsensitive' and [d] is to ignore accents (diacritic); searchString is passed as an argument, never pasted into the format (injection, crash on '%@')
+            browsePredicate = [NSPredicate predicateWithFormat:@"accessionNumber BEGINSWITH[cd] %@", searchString];
             
             if( searchString.length >= 2)
                 [PODFilter setObject: [searchString stringByAppendingString:@"*"] forKey: @"AccessionNumber"];
@@ -1156,6 +1154,47 @@ const NSString* const GenerateMovieDicomImagesParamKey = @"dicomImageArray";
     return NO;
 }
 
+// DICOM nodes this user may send to: offered in the study page, and enforced when a send is requested
+-(NSArray*)allowedDicomDestinations
+{
+	NSMutableArray* dicomDestinations = [NSMutableArray array];
+	if (!user || user.sendDICOMtoSelfIP.boolValue) {
+		[dicomDestinations addObject:[NSDictionary dictionaryWithObjectsAndKeys:
+									  [asyncSocket connectedHost], @"address",
+									  self.dicomCStorePortString, @"port",
+									  @"This Computer", @"aeTitle",
+									  @"1", @"syntax", // 1 == JPEG2000 Lossless
+									  self.requestIsIOS? NSLocalizedString( @"This Device", nil) : [NSString stringWithFormat: NSLocalizedString( @"This Computer [%@:%@]", nil), [asyncSocket connectedHost], self.dicomCStorePortString], @"description",
+									  NULL]];
+		if (!user || user.sendDICOMtoAnyNodes.boolValue)
+			for (NSDictionary* node in [DCMNetServiceDelegate DICOMServersListSendOnly:YES QROnly:NO])
+				[dicomDestinations addObject:[NSDictionary dictionaryWithObjectsAndKeys:
+											  [node objectForKey:@"Address"], @"address",
+											  [node objectForKey:@"Port"], @"port",
+											  [node objectForKey:@"AETitle"], @"aeTitle",
+											  [node objectForKey:@"TransferSyntax"], @"syntax",
+											  self.requestIsIOS? [node objectForKey:@"Description"] : [NSString stringWithFormat:@"%@ [%@:%@]", [node objectForKey:@"Description"], [node objectForKey:@"Address"], [node objectForKey:@"Port"]], @"description",
+											  NULL]];
+	}
+	return dicomDestinations;
+}
+
+-(BOOL)isAllowedDicomDestination:(NSDictionary*)dicomDestination
+{
+	NSString* (^decoded)(id) = ^NSString*(id value) {
+		NSString* s = [value description];
+		return [s stringByRemovingPercentEncoding] ?: s;
+	};
+
+	for (NSDictionary* allowed in [self allowedDicomDestinations])
+		if ([decoded([dicomDestination objectForKey:@"Address"]) isEqualToString:decoded([allowed objectForKey:@"address"])] &&
+			[decoded([dicomDestination objectForKey:@"Port"]) isEqualToString:decoded([allowed objectForKey:@"port"])] &&
+			[decoded([dicomDestination objectForKey:@"AETitle"]) isEqualToString:decoded([allowed objectForKey:@"aeTitle"])])
+			return YES;
+
+	return NO;
+}
+
 -(void)processStudyHtml
 {
     [self processStudyHtml: [parameters objectForKey:@"xid"]];
@@ -1211,7 +1250,11 @@ const NSString* const GenerateMovieDicomImagesParamKey = @"dicomImageArray";
 			[dicomDestination setObject:[dicomDestinationArray objectAtIndex:(long)dicomDestinationArray.count-3] forKey:@"Port"];
 			[dicomDestination setObject:[dicomDestinationArray objectAtIndex:(long)dicomDestinationArray.count-2] forKey:@"AETitle"];
 			[dicomDestination setObject:[dicomDestinationArray objectAtIndex:(long)dicomDestinationArray.count-1] forKey:@"TransferSyntax"];
-			
+
+            // the page only offers allowed nodes, but the request can be crafted: never send elsewhere
+            if (![self isAllowedDicomDestination:dicomDestination]) {
+                [response.tokens addError: NSLocalizedString(@"Dicom send failed: you are not allowed to send to this node.", @"Web Portal, study, dicom send, error")];
+            } else {
             NSMutableArray* selectedImages = [NSMutableArray array];
             if( selectedSeries.count)
                 for (DicomSeries* s in selectedSeries)
@@ -1225,6 +1268,7 @@ const NSString* const GenerateMovieDicomImagesParamKey = @"dicomImageArray";
 				[response.tokens addMessage:[NSString stringWithFormat:NSLocalizedString(@"Dicom send to node %@ initiated.", @"Web Portal, study, dicom send, success"), [[dicomDestination objectForKey:@"AETitle"] stringByReplacingPercentEscapesUsingEncoding:NSUTF8StringEncoding]]];
 			} else
 				[response.tokens addError: NSLocalizedString(@"Dicom send failed: no images selected. Select one or more series.", @"Web Portal, study, dicom send, error")];
+            }
 		} else
 			[response.tokens addError: NSLocalizedString(@"Dicom send failed: cannot identify node.", @"Web Portal, study, dicom send, error")];
 	}
@@ -1374,26 +1418,7 @@ const NSString* const GenerateMovieDicomImagesParamKey = @"dicomImageArray";
         
 		// DICOM destinations
         
-		NSMutableArray* dicomDestinations = [NSMutableArray array];
-		if (!user || user.sendDICOMtoSelfIP.boolValue) {
-            [dicomDestinations addObject:[NSDictionary dictionaryWithObjectsAndKeys:
-                                          [asyncSocket connectedHost], @"address",
-                                          self.dicomCStorePortString, @"port",
-                                          @"This Computer", @"aeTitle",
-                                          @"1", @"syntax", // 1 == JPEG2000 Lossless
-                                          self.requestIsIOS? NSLocalizedString( @"This Device", nil) : [NSString stringWithFormat: NSLocalizedString( @"This Computer [%@:%@]", nil), [asyncSocket connectedHost], self.dicomCStorePortString], @"description",
-                                          NULL]];
-			if (!user || user.sendDICOMtoAnyNodes.boolValue)
-				for (NSDictionary* node in [DCMNetServiceDelegate DICOMServersListSendOnly:YES QROnly:NO])
-					[dicomDestinations addObject:[NSDictionary dictionaryWithObjectsAndKeys:
-												  [node objectForKey:@"Address"], @"address",
-												  [node objectForKey:@"Port"], @"port",
-												  [node objectForKey:@"AETitle"], @"aeTitle",
-												  [node objectForKey:@"TransferSyntax"], @"syntax",
-												  self.requestIsIOS? [node objectForKey:@"Description"] : [NSString stringWithFormat:@"%@ [%@:%@]", [node objectForKey:@"Description"], [node objectForKey:@"Address"], [node objectForKey:@"Port"]], @"description",
-												  NULL]];
-		}
-		[response.tokens setObject:dicomDestinations forKey:@"DicomDestinations"];
+		[response.tokens setObject:[self allowedDicomDestinations] forKey:@"DicomDestinations"];
 		
 		// Share
 		
@@ -2798,9 +2823,15 @@ const NSString* const GenerateMovieDicomImagesParamKey = @"dicomImageArray";
 
 
 -(void)processZip {
+	// the page only shows the ZIP link with this permission, but the request can be crafted
+	if (user && !user.downloadZIP.boolValue) {
+		response.statusCode = 403;
+		return;
+	}
+
 	NSMutableArray* images = [NSMutableArray array];
 	DicomStudy* study = nil;
-    
+
 	NSManagedObject* o = [self objectWithXID:[parameters objectForKey:@"xid"]];
 	if ([o isKindOfClass:[DicomStudy class]]) {
 		study = (DicomStudy*)o;

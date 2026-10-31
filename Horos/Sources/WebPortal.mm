@@ -751,10 +751,9 @@ static NSString* DefaultWebPortalDatabasePath = nil;
 	[sessionCreateLock lock];
 	
 	NSString* sid;
-	long sidd;
-	do { // is this a dumb way to generate SIDs?
-		sidd = random();
-	} while ([self sessionForId: sid = [[[NSData dataWithBytes:&sidd length:sizeof(long)] md5Digest] hex]]);
+	do {
+		sid = [WebPortalSession randomIdentifier];
+	} while ([self sessionForId: sid]);
 	
     WebPortalSession* session = [self addSession: sid];
     
