@@ -20421,7 +20421,7 @@ static float oldsetww, oldsetwl;
                     return 0;
                 }
                 
-                if( preLocation != 0)
+                if( globalCount > 1) // not the first ROI: location 0 is a valid position
                     volume += ((location - preLocation)/10.) * (curArea + prevArea)/2.;
                 
                 prevArea = curArea;

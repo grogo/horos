@@ -104,6 +104,7 @@
 {
 	int i;
 	float prevArea, preLocation;
+	BOOL hasPrevious = NO; // slice location 0 is a valid position, so it can't mark "no previous ROI"
 	prevArea = 0.;
 	preLocation = 0.;
 	volume = 0.;
@@ -117,12 +118,14 @@
 			// volume
 			DCMPix *pic = [curROI pix];
 			float curArea = [curROI roiArea];
-			if( preLocation != 0)
+			if( hasPrevious)
 				volume += (([pic sliceLocation] - preLocation)/10.) * (curArea + prevArea)/2.;
 			prevArea = curArea;
 			preLocation = [pic sliceLocation];
+			hasPrevious = YES;
 		}
 	}
+	volume = fabs( volume); // slice locations may decrease
 	
 	if([roiList count])
 	{
