@@ -57,7 +57,7 @@ public:
         return EC_JLSUncompressedBufferTooSmall;
       case charls::ApiResult::CompressedBufferTooSmall:
         return EC_JLSCompressedBufferTooSmall;
-      case charls::ApiResult::ImageTypeNotSupported:
+      case charls::jpegls_errc::encoding_not_supported: // ImageTypeNotSupported before CharLS 2.1
         return EC_JLSCodecUnsupportedImageType;
       case charls::ApiResult::InvalidJlsParameters:
         return EC_JLSCodecInvalidParameters;
@@ -65,7 +65,7 @@ public:
         return EC_JLSCodecUnsupportedValue;
       case charls::ApiResult::InvalidCompressedData:
         return EC_JLSInvalidCompressedData;
-      case charls::ApiResult::UnsupportedBitDepthForTransform:
+      case charls::jpegls_errc::bit_depth_for_transform_not_supported: // UnsupportedBitDepthForTransform before CharLS 2.1
         return EC_JLSUnsupportedBitDepthForTransform;
       case charls::ApiResult::UnsupportedColorTransform:
         return EC_JLSUnsupportedColorTransform;
