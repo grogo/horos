@@ -18,7 +18,8 @@ make clean                                 # rm -rf ./build
 
 Or open `Horos.xcodeproj` in Xcode and build the `Horos` scheme. Individual dependencies can be built on their own via their targets/schemes (`VTK`, `ITK`, `DCMTK`, `GDCM`, `OpenSSL`, `CharLS`, `OpenJPEG`, `Grok`, `FeedbackReporter`, `Unzip Binaries`), e.g. `xcodebuild -project Horos.xcodeproj -target DCMTK`.
 
-- `Config.xcconfig` sets the signing team, the single target architecture (`ARCHS = arm64` or `x86_64` — only one at a time is supported), and the deployment target (macOS 11.0).
+- `Config.xcconfig` sets the signing team, the single target architecture (`ARCHS = arm64` or `x86_64` — only one at a time is supported), and the deployment target (macOS 12.0, the minimum for current Xcode).
+- The project C++ standard is C++17 (`CLANG_CXX_LANGUAGE_STANDARD`), required by ITK 5.4 headers (CharLS 2.4 headers need at least C++14). The third-party `CMake.sh` scripts pass it on via `-std=`.
 - With an empty `DEVELOPMENT_TEAM`, the `Makefile` passes `CODE_SIGN_IDENTITY=- CODE_SIGN_STYLE=Manual` (ad-hoc signing); the project's target-level `"Apple Development"` identity otherwise overrides the xcconfig. Building from the Xcode GUI without a team needs the same overrides.
 - The `Makefile` exports `CMAKE_POLICY_VERSION_MINIMUM=3.5` because CMake 4.x rejects old submodules (e.g. CharLS). Set it yourself when invoking `xcodebuild` directly.
 - Third-party CMake scripts must not pick up Homebrew packages (`/opt/homebrew`): its OpenSSL 3 headers break DCMTK, which expects the bundled OpenSSL 1.1.1, and linked dylibs would make the app depend on Homebrew. DCMTK's script excludes them via `CMAKE_IGNORE_PATH` (the other scripts only exclude MacPorts' `/opt/local`), and OpenJPEG/Grok build with `BUILD_CODEC=OFF` (Horos only needs `libopenjp2.a`).
@@ -31,7 +32,7 @@ Each submodule (top-level `ITK/`, `VTK/`, `DCMTK/`, `GDCM/`, `OpenSSL/`, `CharLS
 - `CMake.sh` (or `Config.sh` for OpenSSL) configures into `$TARGET_TEMP_DIR/CMake` and installs to `$TARGET_TEMP_DIR/Install`. It caches a hash of the script + build environment in `.cmakehash` and skips reconfiguration if unchanged — editing the script forces a reconfigure.
 - `Make.sh` compiles and copies results into `$BUILT_PRODUCTS_DIR/<Lib>`; it is skipped if that directory exists without an `.incomplete` marker. Delete `build/` (or that directory) to force a rebuild.
 - The `Submodules` target runs `git submodule update --init --recursive` on every build, resetting each submodule to the commit recorded in the superproject. To change a library version, check out the new tag in the submodule **and `git add <submodule>`** before building, or the build silently uses the old version.
-- **Local fixes to submodule sources are not committed in the submodules.** They live as `Horos/Scripts/<Lib>/compile-fixes.patch` (currently VTK, ITK, DCMTK) and are applied by `CMake.sh` with `patch --forward`. To change third-party code, update the patch file rather than relying on edits inside the submodule (submodules are configured `ignore = dirty`).
+- **Local fixes to submodule sources are not committed in the submodules.** They live as `Horos/Scripts/<Lib>/compile-fixes.patch` (currently only VTK) and are applied by `CMake.sh` with `patch --forward`. To change third-party code, update the patch file rather than relying on edits inside the submodule (submodules are configured `ignore = dirty`).
 
 `Binaries/` holds zipped prebuilt assets (Weasis, report templates, Core Data model history, etc.) extracted by the `Unzip Binaries` target (`Horos/Scripts/Horos/Unzip.sh`). `Binaries/dcmtk-source/` is a separate in-tree copy of DCMTK sources, distinct from the `DCMTK/` submodule; the Xcode project still compiles a few files from it directly (mainly the `dcmjpls` JPEG-LS codec).
 
@@ -49,7 +50,7 @@ Each submodule (top-level `ITK/`, `VTK/`, `DCMTK/`, `GDCM/`, `OpenSSL/`, `CharLS
 - `DCM Framework/` — Objective-C DICOM object model (`DCMObject`, `DCMAttribute`, transfer syntaxes, JPEG/JPEG2000 pixel codecs), built as the `DCM` target.
 - `Nitrogen/` — shared Cocoa utility library (N2* classes) used across the app.
 - `API/` + `Horos/Scripts/Horos/API-Headers.pl` / `API.sh` — the `API` target produces `Horos.framework`, whose public headers are generated from `Nitrogen/Sources` and `Horos/Sources`. `API.sh` also emits copies named `HorosAPI`, `OsiriXAPI`, `OsiriX Headers`, `HorosDCM` because existing plugins hard-link against those names — keep this in mind when renaming or removing public classes/methods, since plugins depend on the binary API.
-- `Decompress/` — helper executable for decompressing images in a separate process.
+- `Decompress/` — helper executable that compresses/decompresses images in a separate process (it deletes its input files). It needs the `disable-library-validation` entitlement to load the app's frameworks in ad-hoc signed builds. The app's copy (`Contents/Resources/Decompress`) is only refreshed by a clean build.
 - `Preference Panes/`, `DICOMPrint/`, `DicomImporter/`, `Papyrus3/`, `NIfTI_Library/`, `OpenSSL` etc. — supporting modules and legacy libraries compiled into the app.
 
 ## Localization
